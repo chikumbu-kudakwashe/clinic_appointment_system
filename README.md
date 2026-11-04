@@ -1,13 +1,10 @@
 # Clinic Appointment Management System
 
-**A Python-Based Object-Oriented Programming Project**
-
 ## Project Information
 
 | Field | Details |
 |---|---|
 | Project Title | Clinic Appointment Management System |
-| Institution | University of Zimbabwe |
 | Course / Module | HCS301 - 2026 |
 | Programming Language | Python 3 |
 | Project Type | Pair Assignment |
