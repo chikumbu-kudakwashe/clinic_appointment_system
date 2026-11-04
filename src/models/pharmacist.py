@@ -1,12 +1,9 @@
-
 from .staff import Staff
 
 
 class Pharmacist(Staff):
-    """Represents a pharmacist working at the clinic."""
-
-    def role(self) -> str:
+    def role(self):
         return "Pharmacist"
 
-    def fee(self) -> float:
+    def fee(self):
         return 5

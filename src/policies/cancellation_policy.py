@@ -1,28 +1,17 @@
-
-from src.models.appointment import AppointmentStatus
+from src.models.status import AppointmentStatus
 
 
 class CancellationPolicy:
-    """Applies the clinic's appointment cancellation rules."""
+    """The single home of the cancellation rules (D1)."""
 
-    def can_cancel(self, appointment, current_hour):
+    MIN_NOTICE_FOR_CONFIRMED = 2
 
-        if isinstance(current_hour, bool) or not isinstance(current_hour, int):
-            raise TypeError("Current hour must be an integer.")
-
-        if not 0 <= current_hour <= 168:
-            raise ValueError("Current hour must be between 0 and 168.")
-
-        if appointment.status == AppointmentStatus.CANCELLED:
-            return False
-
-        if current_hour >= appointment.start_hour:
-            return False
-
-        if (
-            appointment.status == AppointmentStatus.CONFIRMED
-            and appointment.start_hour - current_hour < 2
-        ):
-            return False
-
-        return True
+    @classmethod
+    def violation(cls, status, start_hour, now):
+        if status is AppointmentStatus.CANCELLED:
+            return "already cancelled"
+        if now >= start_hour:
+            return "already started"
+        if status is AppointmentStatus.CONFIRMED and start_hour - now < cls.MIN_NOTICE_FOR_CONFIRMED:
+            return "too late"
+        return None
