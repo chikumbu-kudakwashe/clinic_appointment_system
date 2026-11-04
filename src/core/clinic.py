@@ -1,147 +1,150 @@
-
+import os
+import sys
 from contextlib import contextmanager
-from src.models.appointment import Appointment, AppointmentStatus
-from src.models.patient import Patient
-from src.models.staff import Staff
+
+from src.errors import BookingError, ClinicError, LogUnavailable
+from src.models.appointment import Appointment
+from src.models.status import AppointmentStatus
 
 
+# Invariants of Clinic:
+#  every id (patient, staff, appointment) is unique across the whole clinic
+#  no staff member and no patient has two non-cancelled appointments at one hour
+#  (exception: an emergency patient may bump the staff member's PENDING one)
+#  only registered people can be booked; nothing is booked in the past
+#   every public action opens the log once, closes it once, and records
+#     either its result or "FAILED <action>: <reason>"
+#   internal collections are never handed out (only tuples)
 class Clinic:
-    """
-    Clinic invariants:
-    - All person and appointment IDs must be unique.
-    - Patients and staff cannot have overlapping active appointments.
-    - Every clinic action must be logged.
-    - Internal collections must never be directly exposed.
-    """
-
-    def __init__(self, clock, log_file="clinic.log"):
-        self.__patients = []
-        self.__staff = []
-        self.__appointments = []
-        self.__ids = set()
+    def __init__(self, clock, log_path="logs/clinic.log"):
         self.__clock = clock
-        self.__log_file = log_file
+        self.__log_path = log_path
+        self.__ids = set()
+        self.__patients = {}
+        self.__staff = {}
+        self.__appointments = {}
 
     @contextmanager
-    def __log_action(self, action):
-        file = open(self.__log_file, "a", encoding="utf-8")
+    def __action(self, label):
+        try:
+            folder = os.path.dirname(self.__log_path)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            log = open(self.__log_path, "a", encoding="utf-8")
+        except OSError as error:
+            raise LogUnavailable(f"cannot open log: {error}") from error
         print("[log] opened")
 
+        def note(message):
+            try:
+                log.write(message + "\n")
+            except OSError as error:  
+                print(f"[log] write failed: {error}", file=sys.stderr)
+
         try:
-            yield file
+            yield note
         except Exception as error:
-            file.write(f"FAILED {action}: {error}\n")
+            note(f"FAILED {label}: {error}")
             raise
         finally:
-            file.close()
+            try:
+                log.close()
+            except OSError as error:
+                print(f"[log] close failed: {error}", file=sys.stderr)
             print("[log] closed")
 
+    # registration 
     def register_patient(self, patient):
-        with self.__log_action("register patient") as log:
-            if not isinstance(patient, Patient):
-                raise TypeError("A valid Patient is required.")
-
-            if patient.id in self.__ids:
-                raise ValueError("ID already exists.")
-
-            self.__ids.add(patient.id)
-            self.__patients.append(patient)
-            log.write(f"Registered patient #{patient.id}\n")
+        with self.__action(f"register patient #{patient.id}") as note:
+            self.__claim_id(patient.id)
+            self.__patients[patient.id] = patient
+            note(f"Registered patient #{patient.id}")
 
     def register_staff(self, staff):
-        with self.__log_action("register staff") as log:
-            if not isinstance(staff, Staff):
-                raise TypeError("A valid Staff member is required.")
+        with self.__action(f"register staff #{staff.id}") as note:
+            self.__claim_id(staff.id)
+            self.__staff[staff.id] = staff
+            note(f"Registered staff #{staff.id} ({staff.role()})")
 
-            if staff.id in self.__ids:
-                raise ValueError("ID already exists.")
+    def flag_emergency(self, patient_id, flag=True):
+        with self.__action(f"flag emergency #{patient_id}") as note:
+            self.__lookup(self.__patients, patient_id, "patient").set_emergency(flag)
+            note(f"Patient #{patient_id} emergency={flag}")
 
-            self.__ids.add(staff.id)
-            self.__staff.append(staff)
-            log.write(f"Registered staff #{staff.id}\n")
-
+    # appointments 
     def book_appointment(self, appointment_id, patient, staff, start_hour):
-        with self.__log_action(f"book appointment #{appointment_id}") as log:
-
-            if appointment_id in self.__ids:
-                raise ValueError("Appointment ID already exists.")
-
-            if patient not in self.__patients:
-                raise ValueError("Patient is not registered.")
-
-            if staff not in self.__staff:
-                raise ValueError("Staff member is not registered.")
-
-            if start_hour < self.__clock.now():
-                raise ValueError("Cannot book an appointment in the past.")
-
-            for appointment in self.__appointments:
-                if (
-                    appointment.status != AppointmentStatus.CANCELLED
-                    and appointment.start_hour == start_hour
-                    and (
-                        appointment.patient == patient
-                        or appointment.staff == staff
-                    )
-                ):
-                    raise ValueError(
-                        "Patient or staff member already has an appointment at this hour."
-                    )
-
-            appointment = Appointment(
-                appointment_id, patient, staff, start_hour
-            )
-
-            self.__appointments.append(appointment)
-            self.__ids.add(appointment_id)
-
-            log.write(f"Booked appointment #{appointment_id}\n")
-
-            return appointment
+        with self.__action(f"book #{appointment_id}") as note:
+            return self.__book(note, appointment_id, patient, staff, start_hour)
 
     def confirm_appointment(self, appointment_id):
-        with self.__log_action(f"confirm appointment #{appointment_id}") as log:
-            appointment = self.__find_appointment(appointment_id)
-            appointment.confirm()
-
-            log.write(f"Confirmed appointment #{appointment_id}\n")
+        with self.__action(f"confirm #{appointment_id}") as note:
+            self.__lookup(self.__appointments, appointment_id, "appointment").confirm()
+            note(f"Confirmed #{appointment_id}")
 
     def cancel_appointment(self, appointment_id, reason=""):
-        with self.__log_action(f"cancel appointment #{appointment_id}") as log:
-            appointment = self.__find_appointment(appointment_id)
+        with self.__action(f"cancel #{appointment_id}") as note:
+            appointment = self.__lookup(self.__appointments, appointment_id, "appointment")
             appointment.cancel(self.__clock.now(), reason)
-
-            log.write(
-                f"Cancelled appointment #{appointment_id}: {reason}\n"
-            )
+            note(f"Cancelled #{appointment_id}: {reason}")
 
     def show_staff_fees(self):
-        with self.__log_action("show staff fees") as log:
-            for staff in self.__staff:
-                fee = staff.fee()
-                print(staff.role(), fee)
-                log.write(f"{staff.role()} fee: {fee}\n")
+        with self.__action("show fees") as note:
+            for member in self.__staff.values():  # one loop, no type checks
+                print(member.role(), member.fee())
+                note(f"{member.role()} fee: {member.fee()}")
 
-    def set_time(self, hour):
-        with self.__log_action("set clinic time") as log:
-            self.__clock.set_time(hour)
-            log.write(f"Clinic time set to hour {hour}\n")
-
-    def __find_appointment(self, appointment_id):
-        for appointment in self.__appointments:
-            if appointment.id == appointment_id:
-                return appointment
-
-        raise ValueError("Appointment not found.")
-
+    # read-only views 
     @property
     def appointments(self):
-        return tuple(self.__appointments)
+        return tuple(self.__appointments.values())
 
     @property
     def patients(self):
-        return tuple(self.__patients)
+        return tuple(self.__patients.values())
 
     @property
     def staff(self):
-        return tuple(self.__staff)
+        return tuple(self.__staff.values())
+
+    # internals 
+    def __book(self, note, appointment_id, patient, staff, start_hour):
+        self.__claim_id(appointment_id, check_only=True)
+        if self.__patients.get(patient.id) is not patient:
+            raise BookingError("patient is not registered")
+        if self.__staff.get(staff.id) is not staff:
+            raise BookingError("staff member is not registered")
+        now = self.__clock.now()
+        if start_hour <= now:
+            raise BookingError("start hour is not in the future")
+
+        same_hour = [a for a in self.__appointments.values()
+                     if a.is_active and a.start_hour == start_hour]
+        if any(a.patient is patient for a in same_hour):
+            raise BookingError("patient already has an appointment at this hour")
+        clashes = [a for a in same_hour if a.staff is staff]
+        if clashes:
+            if not patient.is_emergency:
+                raise BookingError("staff member already booked at this hour")
+            if any(a.status is AppointmentStatus.CONFIRMED for a in clashes):
+                raise BookingError("cannot bump a CONFIRMED appointment")
+
+        appointment = Appointment(appointment_id, patient, staff, start_hour)
+        for old in clashes: 
+            old.cancel(now, "bumped")
+            note(f"Bumped #{old.id} for emergency patient #{patient.id}")
+        self.__ids.add(appointment_id)
+        self.__appointments[appointment_id] = appointment
+        note(f"Booked #{appointment_id}: patient #{patient.id} with staff #{staff.id} at hour {start_hour}")
+        return appointment
+
+    def __claim_id(self, some_id, check_only=False):
+        if some_id in self.__ids:
+            raise BookingError(f"id {some_id} already in use")
+        if not check_only:
+            self.__ids.add(some_id)
+
+    @staticmethod
+    def __lookup(table, key, what):
+        if key not in table:
+            raise ClinicError(f"{what} #{key} not found")
+        return table[key]

@@ -1,15 +1,17 @@
-
 from .person import Person
 
 
 class Patient(Person):
-    """
-    Represents a patient registered at the clinic.
-    """
+    def __init__(self, name, person_id, **kwargs):
+        super().__init__(name, person_id, **kwargs)
+        self.__emergency = False
 
-    def __init__(self, name: str, person_id: int):
-        super().__init__(name, person_id)
+    @property
+    def is_emergency(self):
+        return self.__emergency
 
-    def role(self) -> str:
+    def set_emergency(self, flag=True):
+        self.__emergency = bool(flag)
+
+    def role(self):
         return "Patient"
-

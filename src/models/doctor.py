@@ -1,18 +1,15 @@
+from src.validation import require_positive_int
 
 from .staff import Staff
 
 
 class Doctor(Staff):
-    """
-    Represents a doctor working at the clinic.
-    """
+    def __init__(self, name, person_id, p, **kwargs):
+        super().__init__(name, person_id, **kwargs)
+        self.__p = require_positive_int(p, "P")
 
-    def __init__(self, name: str, person_id: int, p: int):
-        super().__init__(name, person_id)
-        self.__p = p
-
-    def role(self) -> str:
+    def role(self):
         return "Doctor"
 
-    def fee(self) -> float:
+    def fee(self):
         return 40 + 5 * (self.__p % 5)

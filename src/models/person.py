@@ -1,29 +1,24 @@
-
 from abc import ABC, abstractmethod
 
+from src.validation import require_positive_int, require_text
 
+
+# Invariants of Person:
+#   name is a non-empty, non-blank string (stored stripped)
+#   id is a positive int (bool is rejected)
+#   fields are private; only read-only properties are exposed
 class Person(ABC):
-    """
-    Abstract base class representing a person in the clinic.
+    __constructed = 0  
 
-    Invariants:
-    - Name must not be empty.
-    - ID must be a positive integer.
-    - Internal fields must not be directly exposed.
-    """
+    def __init__(self, name, person_id, **kwargs):
+        super().__init__(**kwargs)
+        self.__name = require_text(name, "Name")
+        self.__id = require_positive_int(person_id, "Person id")
+        Person.__constructed += 1
 
-    def __init__(self, name: str, person_id: int):
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError("Person name cannot be empty.")
-
-        if isinstance(person_id, bool) or not isinstance(person_id, int):
-            raise TypeError("Person ID must be an integer.")
-
-        if person_id <= 0:
-            raise ValueError("Person ID must be positive.")
-
-        self.__name = name.strip()
-        self.__id = person_id
+    @classmethod
+    def constructed_count(cls):
+        return Person.__constructed
 
     @property
     def name(self):
@@ -34,7 +29,5 @@ class Person(ABC):
         return self.__id
 
     @abstractmethod
-    def role(self) -> str:
-        """Return the role of this person."""
-        pass
-
+    def role(self):
+        ...
